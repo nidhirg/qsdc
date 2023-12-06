@@ -23,15 +23,25 @@ counts = result.get_counts(circuit)
 print(counts)
 """
 
-
-
+##debug remove
+def dprint(*args, **kwargs):
+    if True:
+        print(*args, **kwargs)
 
 #Translated from paper:
-from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, Aer, execute
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, Aer, execute, transpile
 from qiskit.quantum_info import random_unitary
+from qiskit_aer.noise import (NoiseModel, QuantumError, ReadoutError,
+    pauli_error, depolarizing_error, thermal_relaxation_error, errors)
 import random
 import numpy as np
 
+# add noise to simulator
+p_meas = 0.1 # prob of flipping the state of measured qubit
+error_meas = errors.depolarizing_error(p_meas, 1) # pauli_error([('X',p_meas), ('I', 1 - p_meas)])
+noise_model = NoiseModel()
+noise_model.add_all_qubit_quantum_error(error_meas, "measure")
+dprint(noise_model)
 simulator = Aer.get_backend('qasm_simulator')
 
 #Initialize EPR Pairs
@@ -51,24 +61,18 @@ for _ in range(N):
 
 #Evil Eve gets a hold of num_qubits_to_eavesdrop qubits and eavesdrops on those (measures those in Bell basis)
 #Eavesdropping:
-"""
-num_qubits_to_eavesdrop = 5
-eavesdrop_indices = np.random.choice(N, num_qubits_to_eavesdrop, replace=False)
-print("Eavesdropped bit indices:")
-print(eavesdrop_indices)
-for i in eavesdrop_indices:
-    qc = epr_pairs[i]
-    qc.z(0)
-    qc.x(1)
-    qc.cx(0, 1)
-    qc.h(0)
-    qc.measure([0, 1], [0, 1])
-print("begin eavesdropping results")
-results = [execute(epr_pairs[i], simulator, shots=100).result().get_counts(epr_pairs[i]) for i in eavesdrop_indices]
-for result in results:
-    print(result)
-print("end eavesdropping results")
-"""
+if (True):
+    num_qubits_to_eavesdrop = 5
+    eavesdrop_indices = np.random.choice(N, num_qubits_to_eavesdrop, replace=False)
+    print("Eavesdropped bit indices:")
+    print(eavesdrop_indices)
+    for i in eavesdrop_indices:
+        qc = epr_pairs[i]
+        # removed bell basis measurement, replaced with measurement in sigma_x or sigma_z basis
+        if np.random.random() < 1:#0.5:
+            qc.h(0)
+        qc.measure(0, 0)
+
 
 # Example of eavesdropping check procedure
 # In practice, Bob should choose randomly and Alice should measure accordingly
@@ -77,20 +81,33 @@ check_indices = random_indices[:len(random_indices)//2]
 print("Eavesdrop check indices:")
 print(check_indices)
 for i in check_indices:
-    epr_pairs[i].measure(0, 0)
-    epr_pairs[i].measure(1, 1)
-results = [execute(epr_pairs[i], simulator, shots=100).result().get_counts(epr_pairs[i]) for i in check_indices]
+    epr_pairs[i].measure([0, 1], [0, 1])
+results = [execute(epr_pairs[i], simulator, shots=100, noise_model=noise_model).result().get_counts(epr_pairs[i]) for i in check_indices]
 print("begin c check")
-for result in results:
+for i, result in enumerate(results):
     print(result)
+    if result.get('00', 0) + result.get('11', 0) > 50:
+        dprint("error on qubit", check_indices[i])
 print("end c check")
 
-#Alice does eavesdrop trick (apply Z gate to random bits for simplicity)
+#Alice does eavesdrop trick (apply unitary gate to random bits)
 check_indices = random_indices[len(random_indices)//2:]
+unitaries = []
 print("Second eavesdrop check indices:")
 print(check_indices)
 for i in check_indices:
-    epr_pairs[i].z(1)
+    r = np.random.random()
+    if r < 0.25:
+        unitaries.append('00')
+    elif r < 0.5:
+        epr_pairs[i].z(1)
+        unitaries.append('01')
+    elif r < 0.75:
+        epr_pairs[i].x(1)
+        unitaries.append('10')
+    else:
+        epr_pairs[i].y(1)
+        unitaries.append('11')
 
 #Alice encodes the message
 message = '0123'  # Example binary message
@@ -111,26 +128,21 @@ for i, bit_pair in enumerate(message):
         #epr_pairs[i].s(1)
         #.s(1) applies S-gate, which is phase shift, which is multiply by i
 
-#Evil Eve gets a hold of num_qubits_to_eavesdrop qubits and eavesdrops on those (measures those in Bell basis)
+#Evil Eve gets a hold of num_qubits_to_eavesdrop qubits and interferes on those (she can't gain information because she doesn't have both halves of the EPR pair)
 #Eavesdropping:
-
+# not sure if we should be eavesdropping here bc all she can do at this point is interfere
 num_qubits_to_eavesdrop = 5
 eavesdrop_indices = np.random.choice(N, num_qubits_to_eavesdrop, replace=False)
 print("Eavesdropped bit indices:")
 print(eavesdrop_indices)
 for i in eavesdrop_indices:
     qc = epr_pairs[i]
-    qc.z(0)
     qc.x(1)
-    qc.cx(0, 1)
-    qc.h(0)
-    qc.measure([0, 1], [0, 1])
-print("begin eavesdropping results")
-results = [execute(epr_pairs[i], simulator, shots=100).result().get_counts(epr_pairs[i]) for i in eavesdrop_indices]
-for result in results:
-    print(result)
-print("end eavesdropping results")
-
+# print("begin eavesdropping results")
+# results = [execute(epr_pairs[i], simulator, shots=100).result().get_counts(epr_pairs[i]) for i in eavesdrop_indices]
+# for result in results:
+#     print(result)
+# print("end eavesdropping results")
 #Bob checks eavesdropping
 for qc in [epr_pairs[i] for i in check_indices]:
     qc.z(0)
@@ -138,10 +150,12 @@ for qc in [epr_pairs[i] for i in check_indices]:
     qc.cx(0, 1)
     qc.h(0)
     qc.measure([0, 1], [0, 1])
-results = [execute(epr_pairs[i], simulator, shots=100).result().get_counts(epr_pairs[i]) for i in check_indices]
+results = [execute(epr_pairs[i], simulator, shots=100, noise_model=noise_model).result().get_counts(epr_pairs[i]) for i in check_indices]
 print("begin c check")
-for result in results:
-    print(result)
+for i, result in enumerate(results):
+    print(result, unitaries[i])
+    if unitaries[i] not in result or result[unitaries[i]] < 100:
+        print("error on qubit", check_indices[i])
 print("end c check")
 
 #Transmission and Bob's Measurement
@@ -154,10 +168,12 @@ for qc in [epr_pairs[i] for i in message_indices]:
     qc.h(0)
     qc.measure([0, 1], [0, 1])
 
-results = [execute(epr_pairs[i], simulator, shots=100).result().get_counts(epr_pairs[i]) for i in message_indices]
+results = [execute(epr_pairs[i], simulator, shots=100, noise_model=noise_model).result().get_counts(epr_pairs[i]) for i in message_indices]
 print("begin message")
 for result in results:
     print(result)
 print("end message")
+for qc in epr_pairs:
+    print(qc)
 
 #Error correction goes here if we want to implement it...
